@@ -226,6 +226,28 @@ docker logs unity-catalog | grep -i "datasource\|h2\|postgres"
 
 **Fix:** Ensure `hibernate.properties` is mounted at `/opt/unitycatalog/etc/conf/`
 
+## Roadmap
+
+### Vault Expansion
+- [ ] CLI wrapper for easy secret injection (`lh secrets inject <project>`)
+- [ ] AppRole auth for CI/CD pipelines
+- [ ] Dynamic database credentials
+- [ ] Secret rotation policies
+- [ ] Audit logging to file/syslog
+
+### Model Registry (MLflow)
+- [ ] Enable MLflow service with PostgreSQL backend
+- [ ] Artifact storage on NAS (`/lake/mlflow-artifacts/`)
+- [ ] Model versioning and staging (dev → staging → prod)
+- [ ] Integration with training pipelines
+- [ ] Model serving endpoints (future)
+
+### Infrastructure
+- [ ] Reverse proxy (Caddy/Traefik) for TLS termination
+- [ ] Unified auth across UC, Vault, MLflow
+- [ ] Monitoring stack (Prometheus + Grafana)
+- [ ] Automated health checks and alerting
+
 ## Projects Using This Infrastructure
 
 - [koe-tts](https://github.com/JohnYanez95/koe-tts) - Japanese TTS training pipeline
