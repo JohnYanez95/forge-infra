@@ -16,6 +16,11 @@ etc/data/
 backups/
 mlflow-artifacts/
 
+# Vault
+vault/data/
+vault/logs/
+vault/init-keys.json
+
 # Logs
 *.log
 logs/

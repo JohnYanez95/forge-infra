@@ -6,6 +6,7 @@ Shared data catalog infrastructure for Delta Lake projects.
 
 - **Unity Catalog OSS** - Centralized metadata catalog for Delta tables
 - **PostgreSQL** - Persistent metadata store
+- **HashiCorp Vault** - Secrets management for cross-project env vars
 - **MLflow** (optional) - Model registry and experiment tracking
 
 ## Quick Start
@@ -162,6 +163,42 @@ gunzip -c backups/uc_YYYYMMDD_HHMMSS.sql.gz | \
   docker exec -i -e PGPASSWORD="$UC_DB_PASSWORD" uc-postgres \
   psql -U uc_admin unity_catalog
 ```
+
+## Vault Secrets Management
+
+HashiCorp Vault provides centralized secrets for all projects.
+
+### First-time Setup
+
+```bash
+# Start vault
+docker compose up -d vault
+
+# Initialize (saves keys to vault/init-keys.json)
+chmod +x scripts/vault-init.sh
+./scripts/vault-init.sh
+
+# IMPORTANT: Back up init-keys.json securely, then delete from disk
+```
+
+### Usage
+
+```bash
+# Store a secret
+vault kv put secret/koe-tts UC_DB_PASSWORD=mypassword WANDB_API_KEY=xxx
+
+# Retrieve
+vault kv get -format=json secret/koe-tts | jq -r '.data.data'
+
+# Inject into shell (future: CLI wrapper)
+export $(vault kv get -format=json secret/koe-tts | jq -r '.data.data | to_entries | .[] | "\(.key)=\(.value)"')
+```
+
+### Pinned Version
+
+| Component | Version |
+|-----------|---------|
+| Vault | 1.15 |
 
 ## MLflow Integration (Optional)
 

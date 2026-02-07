@@ -55,6 +55,35 @@ services:
       retries: 3
 
   # ==========================================================================
+  # HashiCorp Vault - Secrets Management
+  # ==========================================================================
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_ADDR: "http://127.0.0.1:8200"
+      VAULT_API_ADDR: "http://127.0.0.1:8200"
+    volumes:
+      - ./vault/config:/vault/config:ro
+      - ./vault/data:/vault/data
+      - ./vault/logs:/vault/logs
+    ports:
+      # SECURITY: Localhost only by default
+      - "127.0.0.1:8200:8200"
+    networks:
+      - uc-external
+    command: vault server -config=/vault/config/vault.hcl
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ==========================================================================
   # MLflow Tracking Server (optional - uncomment to enable)
   # ==========================================================================
   # mlflow:
