@@ -1,20 +1,23 @@
-# Lakehouse Infrastructure
+# Forge Infrastructure
 
-Shared data catalog infrastructure for Delta Lake projects.
+Personal data platform for Delta Lake projects. One storage substrate, multiple control planes.
 
 ## Components
 
+- **MinIO** - S3-compatible object storage for Delta tables
 - **Unity Catalog OSS** - Centralized metadata catalog for Delta tables
 - **PostgreSQL** - Persistent metadata store
 - **HashiCorp Vault** - Secrets management for cross-project env vars
-- **MLflow** (optional) - Model registry and experiment tracking
+- **Hive Metastore** (planned) - Table resolution for Spark
+- **OpenLineage + Marquez** (planned) - Runtime data lineage
+- **MLflow** (planned) - Model registry and experiment tracking
 
 ## Quick Start
 
 ```bash
 # 1. Clone
-git clone https://github.com/JohnYanez95/lakehouse-infra.git
-cd lakehouse-infra
+git clone https://github.com/JohnYanez95/forge-infra.git
+cd forge-infra
 
 # 2. Configure
 cp .env.example .env
@@ -24,36 +27,49 @@ cp etc/conf/hibernate.properties.example etc/conf/hibernate.properties
 # 3. Start services
 docker compose up -d
 
-# 4. Verify
-curl http://127.0.0.1:8080/api/2.1/unity-catalog/catalogs
-# Should return: {"catalogs": []}
+# 4. Verify services
+curl http://127.0.0.1:8080/api/2.1/unity-catalog/catalogs  # UC
+curl http://127.0.0.1:9000/minio/health/live               # MinIO
+# UC should return: {"catalogs": []}
+
+# 5. Set up MinIO bucket
+mc alias set forge http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+mc mb forge/forge  # Create 'forge' bucket
 ```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                  Lakehouse Infrastructure               │
-│                                                         │
-│  ┌──────────────┐  ┌────────────────────────────────┐  │
-│  │  PostgreSQL  │◄─│    Unity Catalog Server        │  │
-│  │   (metadata) │  │         :8080                  │  │
-│  └──────────────┘  └────────────────────────────────┘  │
-│                              │                          │
-│                    ┌─────────┴─────────┐               │
-│                    │      /lake/       │               │
-│                    │  bronze/ silver/  │               │
-│                    │  gold/ (Delta)    │               │
-│                    └───────────────────┘               │
-└─────────────────────────────────────────────────────────┘
-                         │
-        ┌────────────────┼────────────────┐
-        ▼                ▼                ▼
-   ┌─────────┐     ┌─────────┐     ┌─────────┐
-   │ Project │     │ Project │     │ Project │
-   │    A    │     │    B    │     │    C    │
-   │ (Spark) │     │(DuckDB) │     │ (both)  │
-   └─────────┘     └─────────┘     └─────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    Lakehouse Infrastructure                  │
+│                                                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │    Vault    │  │   Catalog   │  │       Armory        │  │
+│  │   Secrets   │  │ (UC + HMS)  │  │  (MLflow Registry)  │  │
+│  │    :8200    │  │    :8080    │  │       :5002         │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+│         │                │                    │              │
+│         └────────────────┼────────────────────┘              │
+│                          ▼                                   │
+│              ┌───────────────────────┐                      │
+│              │   MinIO (S3-compat)   │ ← canonical writes   │
+│              │   s3a://forge/lake/   │   :9000 (API)        │
+│              │  bronze/silver/gold   │   :9001 (Console)    │
+│              └───────────────────────┘                      │
+│                          │                                   │
+│              ┌───────────────────────┐                      │
+│              │     PostgreSQL        │ ← metadata store     │
+│              │   (UC, HMS, MLflow)   │   (internal)         │
+│              └───────────────────────┘                      │
+└─────────────────────────────────────────────────────────────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         ▼                 ▼                 ▼
+    ┌─────────┐      ┌─────────┐      ┌─────────┐
+    │ koe-tts │      │ Project │      │ Project │
+    │ (Spark) │      │    B    │      │    C    │
+    │         │      │(DuckDB) │      │ (both)  │
+    └─────────┘      └─────────┘      └─────────┘
 ```
 
 ## Pinned Versions
@@ -62,8 +78,10 @@ All components are pinned to stable releases:
 
 | Component | Version | Notes |
 |-----------|---------|-------|
+| MinIO | RELEASE.2024-01-16 | S3-compatible storage |
 | Unity Catalog | v0.3.1 | Pinned in docker-compose.yml |
 | PostgreSQL | 16.4-alpine | Metadata store |
+| Vault | 1.15 | Secrets management |
 | PySpark | 4.0.0 | With Scala 2.13 |
 | Delta Spark | 4.0.0 | Match Spark version |
 | DuckDB | 1.2.0 | Pin in requirements.txt |
@@ -153,7 +171,7 @@ By default, UC binds to `127.0.0.1:8080`. This is safe for local development.
 chmod +x scripts/backup.sh
 
 # Add to crontab (daily at 2am)
-0 2 * * * /path/to/lakehouse-infra/scripts/backup.sh
+0 2 * * * /path/to/forge-infra/scripts/backup.sh
 ```
 
 ### Recovery
@@ -200,13 +218,71 @@ export $(vault kv get -format=json secret/koe-tts | jq -r '.data.data | to_entri
 |-----------|---------|
 | Vault | 1.15 |
 
-## MLflow Integration (Optional)
+## MinIO Object Storage
 
-Uncomment the `mlflow` service in `docker-compose.yml` to enable:
+MinIO provides S3-compatible storage for Delta tables and MLflow artifacts.
 
-- Model registry at `http://localhost:5000`
-- Shared PostgreSQL backend
-- Artifact storage in `./mlflow-artifacts/`
+### Critical: Storage Location
+
+**MinIO data MUST be on local disks, NOT NFS-mounted storage.**
+
+MinIO-on-NFS has weird locking behavior and failure modes. Configure `MINIO_DATA_PATH` in `.env`:
+
+```bash
+# For NAS: local disk path
+MINIO_DATA_PATH=/volume1/forge-data
+
+# For development: local directory (default)
+MINIO_DATA_PATH=./minio-data
+```
+
+### Bucket Structure
+
+```
+s3://forge/
+├── lake/
+│   ├── bronze/
+│   │   └── koe/
+│   ├── silver/
+│   │   └── koe/
+│   └── gold/
+│       └── koe/
+└── mlflow/
+    └── artifacts/
+```
+
+### Usage with MinIO Client
+
+```bash
+# Set up alias
+mc alias set forge http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+
+# Browse objects
+mc ls forge/forge/lake/gold/koe/
+
+# View Delta log
+mc cat forge/forge/lake/gold/koe/utterances/_delta_log/00000000000000000000.json
+```
+
+### Client Configuration
+
+Projects connect using these environment variables:
+
+| Variable | Value | Used By |
+|----------|-------|---------|
+| `MINIO_ENDPOINT` | `http://localhost:9000` | Spark, DuckDB |
+| `MINIO_ROOT_USER` | (from .env) | All clients |
+| `MINIO_ROOT_PASSWORD` | (from .env) | All clients |
+| `FORGE_LAKE_ROOT_S3A` | `s3a://forge/lake` | Spark |
+| `FORGE_LAKE_ROOT_S3` | `s3://forge/lake` | DuckDB |
+
+## MLflow Integration (Planned)
+
+Will be enabled with MinIO artifact storage:
+
+- Model registry at `http://localhost:5002`
+- PostgreSQL backend for metadata
+- Artifact storage at `s3://forge/mlflow/`
 
 First, create the MLflow database:
 ```bash
@@ -228,25 +304,36 @@ docker logs unity-catalog | grep -i "datasource\|h2\|postgres"
 
 ## Roadmap
 
-### Vault Expansion
-- [ ] CLI wrapper for easy secret injection (`lh secrets inject <project>`)
-- [ ] AppRole auth for CI/CD pipelines
-- [ ] Dynamic database credentials
-- [ ] Secret rotation policies
-- [ ] Audit logging to file/syslog
+### Storage Layer
+- [x] MinIO S3-compatible storage
+- [ ] Bucket lifecycle policies
+- [ ] Cross-region replication (if needed)
+
+### Catalog Layer
+- [x] Unity Catalog for governance (future use)
+- [ ] Hive Metastore for Spark table resolution
+- [ ] DuckDB view sync from metastore
+
+### Lineage Layer
+- [ ] OpenLineage + Marquez for runtime lineage
+- [ ] Dataset/job relationship graphs
 
 ### Model Registry (MLflow)
 - [ ] Enable MLflow service with PostgreSQL backend
-- [ ] Artifact storage on NAS (`/lake/mlflow-artifacts/`)
+- [ ] Artifact storage on MinIO (`s3://forge/mlflow/`)
 - [ ] Model versioning and staging (dev → staging → prod)
 - [ ] Integration with training pipelines
-- [ ] Model serving endpoints (future)
+
+### Vault Expansion
+- [x] Basic KV secrets engine
+- [ ] CLI wrapper for easy secret injection (`koe bootstrap`)
+- [ ] AppRole auth for CI/CD pipelines
+- [ ] Secret rotation policies
 
 ### Infrastructure
 - [ ] Reverse proxy (Caddy/Traefik) for TLS termination
-- [ ] Unified auth across UC, Vault, MLflow
+- [ ] Unified auth across services
 - [ ] Monitoring stack (Prometheus + Grafana)
-- [ ] Automated health checks and alerting
 
 ## Projects Using This Infrastructure
 
