@@ -1,0 +1,9 @@
+# Unity Catalog PostgreSQL Configuration
+# Copy to hibernate.properties and set password
+
+hibernate.connection.driver_class=org.postgresql.Driver
+hibernate.connection.url=jdbc:postgresql://postgres:5432/unity_catalog
+hibernate.connection.username=uc_admin
+hibernate.connection.password=CHANGE_ME_TO_SECURE_PASSWORD
+hibernate.hbm2ddl.auto=update
+hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect

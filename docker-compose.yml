@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # PostgreSQL - Unity Catalog metadata store
+  # ==========================================================================
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: uc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: unity_catalog
+      POSTGRES_USER: uc_admin
+      POSTGRES_PASSWORD: ${UC_DB_PASSWORD}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    # Internal network only - not exposed to LAN
+    expose:
+      - "5432"
+    networks:
+      - uc-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uc_admin -d unity_catalog"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================================
+  # Unity Catalog Server
+  # ==========================================================================
+  unity-catalog:
+    image: unitycatalog/unitycatalog:v0.3.1
+    container_name: unity-catalog
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Config (read-only until auth enabled, then :rw for token.txt)
+      - ./etc/conf:/opt/unitycatalog/etc/conf:ro
+      - ./etc/data:/opt/unitycatalog/etc/data
+      # Delta Lake storage - mount your lake here
+      - ${LAKE_PATH:-/lake}:/lake:rw
+    ports:
+      # SECURITY: Localhost only by default
+      # Change to "<your-lan-ip>:8080:8080" only after enabling auth
+      - "127.0.0.1:8080:8080"
+    networks:
+      - uc-internal
+      - uc-external
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/api/2.1/unity-catalog/catalogs || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # MLflow Tracking Server (optional - uncomment to enable)
+  # ==========================================================================
+  # mlflow:
+  #   image: ghcr.io/mlflow/mlflow:v2.10.0
+  #   container_name: mlflow
+  #   restart: unless-stopped
+  #   environment:
+  #     MLFLOW_BACKEND_STORE_URI: postgresql://uc_admin:${UC_DB_PASSWORD}@postgres:5432/mlflow
+  #     MLFLOW_DEFAULT_ARTIFACT_ROOT: /artifacts
+  #   volumes:
+  #     - ./mlflow-artifacts:/artifacts
+  #   ports:
+  #     - "127.0.0.1:5000:5000"
+  #   networks:
+  #     - uc-internal
+  #     - uc-external
+  #   command: mlflow server --host 0.0.0.0 --port 5000
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+networks:
+  uc-internal:
+    internal: true
+  uc-external:

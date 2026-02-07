@@ -1,0 +1,21 @@
+# Secrets - NEVER commit
+.env
+*.env
+!.env.example
+
+# Credentials
+hibernate.properties
+token.txt
+**/token.txt
+*.key
+*.pem
+
+# Runtime data
+pgdata/
+etc/data/
+backups/
+mlflow-artifacts/
+
+# Logs
+*.log
+logs/
