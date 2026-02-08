@@ -8,7 +8,7 @@ Personal data platform for Delta Lake projects. One storage substrate, multiple 
 - **Unity Catalog OSS** - Centralized metadata catalog for Delta tables
 - **PostgreSQL** - Persistent metadata store
 - **HashiCorp Vault** - Secrets management for cross-project env vars
-- **Hive Metastore** (planned) - Table resolution for Spark
+- **Hive Metastore** - Table resolution for Spark
 - **OpenLineage + Marquez** (planned) - Runtime data lineage
 - **MLflow** (planned) - Model registry and experiment tracking
 
@@ -79,6 +79,7 @@ All components are pinned to stable releases:
 | Component | Version | Notes |
 |-----------|---------|-------|
 | MinIO | RELEASE.2024-01-16 | S3-compatible storage |
+| Hive Metastore | 4.0.0 | Table resolution for Spark |
 | Unity Catalog | v0.3.1 | Pinned in docker-compose.yml |
 | PostgreSQL | 16.4-alpine | Metadata store |
 | Vault | 1.15 | Secrets management |
@@ -276,6 +277,80 @@ Projects connect using these environment variables:
 | `FORGE_LAKE_ROOT_S3A` | `s3a://forge/lake` | Spark |
 | `FORGE_LAKE_ROOT_S3` | `s3://forge/lake` | DuckDB |
 
+## Hive Metastore
+
+Provides table name → S3 location resolution for Spark. The "phone book" for your Delta tables.
+
+### First-time Setup
+
+```bash
+# Create the metastore database
+docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE metastore;"
+
+# Start metastore (will initialize schema on first boot)
+docker compose up -d metastore
+```
+
+### How It Works
+
+```
+Spark: "Where is gold_koe.utterances?"
+         │
+         ▼
+Hive Metastore (thrift://localhost:9083)
+         │
+         ▼
+PostgreSQL: SELECT location FROM TBLS WHERE name='utterances'
+         │
+         ▼
+Returns: "s3a://forge/lake/gold/koe/utterances"
+         │
+         ▼
+Spark reads directly from MinIO
+```
+
+### Registering Tables
+
+```python
+# In Spark, register a Delta table with metastore
+spark.sql("""
+    CREATE DATABASE IF NOT EXISTS gold_koe
+""")
+
+spark.sql("""
+    CREATE TABLE IF NOT EXISTS gold_koe.utterances
+    USING DELTA
+    LOCATION 's3a://forge/lake/gold/koe/utterances'
+""")
+
+# Now queryable by name
+spark.table("gold_koe.utterances").show()
+```
+
+### Spark Configuration
+
+```python
+spark = (
+    SparkSession.builder
+    .config("spark.sql.catalogImplementation", "hive")
+    .config("hive.metastore.uris", "thrift://localhost:9083")
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    # ... S3/MinIO config ...
+    .getOrCreate()
+)
+```
+
+### Schema Naming Convention
+
+Uses medallion prefix (layer first):
+
+| Schema | Purpose |
+|--------|---------|
+| `bronze_koe` | Raw ingested data |
+| `silver_koe` | Cleaned, normalized |
+| `gold_koe` | Training-ready |
+
 ## MLflow Integration (Planned)
 
 Will be enabled with MinIO artifact storage:
@@ -311,7 +386,7 @@ docker logs unity-catalog | grep -i "datasource\|h2\|postgres"
 
 ### Catalog Layer
 - [x] Unity Catalog for governance (future use)
-- [ ] Hive Metastore for Spark table resolution
+- [x] Hive Metastore for Spark table resolution
 - [ ] DuckDB view sync from metastore
 
 ### Lineage Layer

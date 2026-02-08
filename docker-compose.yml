@@ -113,6 +113,43 @@ services:
       retries: 3
 
   # ==========================================================================
+  # Hive Metastore - Table Resolution for Spark
+  # ==========================================================================
+  # Provides "table name → S3 location" lookups. Spark connects via thrift.
+  # Before first run: docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE metastore;"
+  metastore:
+    image: apache/hive:4.0.0
+    container_name: hive-metastore
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/metastore
+        -Djavax.jdo.option.ConnectionUserName=uc_admin
+        -Djavax.jdo.option.ConnectionPassword=${UC_DB_PASSWORD}
+      # S3/MinIO access for table location resolution
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:9083:9083"
+    networks:
+      - uc-internal
+      - uc-external
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9083 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ==========================================================================
   # MLflow Tracking Server (optional - uncomment to enable)
   # ==========================================================================
   # mlflow:
