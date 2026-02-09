@@ -22,6 +22,9 @@ vault/data/
 vault/logs/
 vault/init-keys.json
 
+# JDBC drivers (downloaded at setup)
+hive/lib/*.jar
+
 # Logs
 *.log
 logs/

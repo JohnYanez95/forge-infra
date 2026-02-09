@@ -107,7 +107,7 @@ services:
     networks:
       - uc-external
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -126,6 +126,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    volumes:
+      - ./hive/lib/postgresql-42.7.3.jar:/opt/hive/lib/postgresql-42.7.3.jar:ro
     environment:
       SERVICE_NAME: metastore
       DB_DRIVER: postgres
@@ -154,7 +156,7 @@ services:
   # ==========================================================================
   # Before first run: docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE mlflow;"
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.10.0
+    build: ./mlflow
     container_name: mlflow
     restart: unless-stopped
     environment:
