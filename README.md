@@ -90,7 +90,7 @@ mc mb forge/forge
 curl http://localhost:8080/api/2.1/unity-catalog/catalogs   # UC
 curl http://localhost:9000/minio/health/live                 # MinIO
 curl http://localhost:5000/api/v1/namespaces                 # Marquez
-curl http://localhost:5002/api/2.0/mlflow/experiments/list   # MLflow
+curl http://localhost:5002/health                            # MLflow
 ```
 
 ## Client Configuration
