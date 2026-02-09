@@ -25,6 +25,9 @@ vault/init-keys.json
 # JDBC drivers (downloaded at setup)
 hive/lib/*.jar
 
+# HMS jars (downloaded at setup)
+hms-jars/*.jar
+
 # Spark test Ivy/Maven cache
 spark-ivy/
 tests/__pycache__/

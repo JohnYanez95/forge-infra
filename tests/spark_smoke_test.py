@@ -10,7 +10,7 @@ Usage:
 
 Interactive PySpark shell:
     docker compose --profile test run --rm --entrypoint /opt/spark/bin/pyspark spark-test \
-        --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262
+        --packages org.apache.hadoop:hadoop-aws:3.4.1,com.amazonaws:aws-java-sdk-bundle:1.12.720
 
 Exit codes:
     0  all checks passed

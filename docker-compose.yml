@@ -113,12 +113,14 @@ services:
       retries: 3
 
   # ==========================================================================
-  # Hive Metastore - Table Resolution for Spark
+  # Hive Metastore 3.1.3 - Table Resolution for Spark
   # ==========================================================================
   # Provides "table name → S3 location" lookups. Spark connects via thrift.
-  # Before first run: docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE metastore;"
+  # Uses HMS 3.1.3 (not 4.0) to avoid NumberFormatException with duration configs.
+  # Before first run: docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE metastore_v3;"
+  # Rollback to HMS 4.0: change build→image: apache/hive:4.0.0, DB→metastore
   metastore:
-    image: apache/hive:4.0.0
+    build: ./hive-metastore
     container_name: hive-metastore
     restart: unless-stopped
     depends_on:
@@ -128,17 +130,23 @@ services:
         condition: service_healthy
     volumes:
       - ./hive/lib/postgresql-42.7.3.jar:/opt/hive/lib/postgresql-42.7.3.jar:ro
+      - ./hms-jars/hadoop-aws-3.3.4.jar:/opt/hive/lib/hadoop-aws-3.3.4.jar:ro
+      - ./hms-jars/aws-java-sdk-bundle-1.12.262.jar:/opt/hive/lib/aws-java-sdk-bundle-1.12.262.jar:ro
     environment:
       SERVICE_NAME: metastore
       DB_DRIVER: postgres
       SERVICE_OPTS: >-
         -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
-        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/metastore
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/metastore_v3
         -Djavax.jdo.option.ConnectionUserName=uc_admin
         -Djavax.jdo.option.ConnectionPassword=${UC_DB_PASSWORD}
-      # S3/MinIO access for table location resolution
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+        -Dfs.s3a.endpoint=http://minio:9000
+        -Dfs.s3a.path.style.access=true
+        -Dfs.s3a.connection.ssl.enabled=false
+        -Dfs.s3a.access.key=${MINIO_ROOT_USER}
+        -Dfs.s3a.secret.key=${MINIO_ROOT_PASSWORD}
+        -Dfs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
+        -Dhive.metastore.warehouse.dir=s3a://forge/lake/warehouse/
     ports:
       - "127.0.0.1:9083:9083"
     networks:
@@ -146,10 +154,10 @@ services:
       - uc-external
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9083'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
 
   # ==========================================================================
   # MLflow Tracking Server - Model Registry (Armory)
@@ -240,13 +248,13 @@ services:
   #
   # Interactive PySpark shell:
   #   docker compose --profile test run --rm --entrypoint /opt/spark/bin/pyspark spark-test \
-  #     --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262
+  #     --packages org.apache.hadoop:hadoop-aws:3.4.1,com.amazonaws:aws-java-sdk-bundle:1.12.720
   #
   # Override Spark image (e.g. test 4.0.2):
   #   SPARK_TEST_IMAGE=apache/spark:4.0.2-scala2.13-java17-python3-ubuntu \
   #     docker compose --profile test run --rm spark-test
   spark-test:
-    image: ${SPARK_TEST_IMAGE:-apache/spark:4.0.0-scala2.13-java17-python3-ubuntu}
+    image: ${SPARK_TEST_IMAGE:-apache/spark:4.0.2-scala2.13-java17-python3-ubuntu}
     profiles: ["test"]
     container_name: forge-spark-test
     depends_on:
@@ -267,6 +275,10 @@ services:
     volumes:
       - ./tests/spark_smoke_test.py:/opt/spark/tests/spark_smoke_test.py:ro
       - ./spark-ivy:/tmp/.ivy2
+    # Run as root: UGOS strips "other" permission bits on bind mounts, so
+    # the default spark user (UID 185) can't read the mounted test script.
+    # Acceptable here — no ports, ephemeral, profile-gated, read-only mount.
+    user: "0:0"
     # No ports exposed — test-only container (§5 least privilege)
     networks:
       - uc-external
@@ -274,8 +286,10 @@ services:
     command:
       - "--master"
       - "local[*]"
+      - "--conf"
+      - "spark.jars.ivy=/tmp/.ivy2"
       - "--packages"
-      - "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
+      - "org.apache.hadoop:hadoop-aws:3.4.1,com.amazonaws:aws-java-sdk-bundle:1.12.720"
       - "/opt/spark/tests/spark_smoke_test.py"
 
 networks:
