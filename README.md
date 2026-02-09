@@ -275,6 +275,15 @@ Same pattern for `mlflow_*.sql.gz` and `marquez_*.sql.gz`.
 
 ## Troubleshooting
 
+### Common Pitfalls (NAS Deployment)
+
+- **Docker socket permission denied:** Add your user to the `docker` group (`sudo usermod -aG docker $USER`) and re-login.
+- **Vault restart loop:** The Vault config mount must not be `:ro` — the container needs to chown the directory before reading it.
+- **MinIO healthcheck fails:** The MinIO container doesn't ship `curl`. Use `mc ready local` instead.
+- **MLflow `No module named 'psycopg2'`:** The base MLflow image lacks a Postgres driver. Use the custom `mlflow/Dockerfile` which adds `psycopg2-binary`.
+- **Hive Metastore `ClassNotFoundException: org.postgresql.Driver`:** The Hive image doesn't include the PostgreSQL JDBC driver. Download it into `hive/lib/` (see Quick Start step 2).
+- **`CREATE DATABASE` fails with `database "uc_admin" does not exist`:** Specify the target database explicitly: `psql -U uc_admin -d unity_catalog -c "CREATE DATABASE ..."`.
+
 ### UC using embedded H2 instead of Postgres
 
 **Symptom:** Tables disappear after container restart.
