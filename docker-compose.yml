@@ -67,7 +67,7 @@ services:
       VAULT_ADDR: "http://127.0.0.1:8200"
       VAULT_API_ADDR: "http://127.0.0.1:8200"
     volumes:
-      - ./vault/config:/vault/config:ro
+      - ./vault/config:/vault/config
       - ./vault/data:/vault/data
       - ./vault/logs:/vault/logs
     ports:
