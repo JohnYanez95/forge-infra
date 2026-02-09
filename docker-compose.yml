@@ -150,26 +150,85 @@ services:
       start_period: 60s
 
   # ==========================================================================
-  # MLflow Tracking Server (optional - uncomment to enable)
+  # MLflow Tracking Server - Model Registry (Armory)
   # ==========================================================================
-  # mlflow:
-  #   image: ghcr.io/mlflow/mlflow:v2.10.0
-  #   container_name: mlflow
-  #   restart: unless-stopped
-  #   environment:
-  #     MLFLOW_BACKEND_STORE_URI: postgresql://uc_admin:${UC_DB_PASSWORD}@postgres:5432/mlflow
-  #     MLFLOW_DEFAULT_ARTIFACT_ROOT: /artifacts
-  #   volumes:
-  #     - ./mlflow-artifacts:/artifacts
-  #   ports:
-  #     - "127.0.0.1:5000:5000"
-  #   networks:
-  #     - uc-internal
-  #     - uc-external
-  #   command: mlflow server --host 0.0.0.0 --port 5000
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
+  # Before first run: docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE mlflow;"
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.10.0
+    container_name: mlflow
+    restart: unless-stopped
+    environment:
+      # Postgres backend for experiment/run metadata
+      MLFLOW_BACKEND_STORE_URI: postgresql://uc_admin:${UC_DB_PASSWORD}@postgres:5432/mlflow
+      # S3/MinIO for artifacts - tightened path prevents clutter in mlflow/ root
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://forge/mlflow/artifacts
+      # MinIO credentials for artifact storage
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      # Path-style addressing for MinIO compatibility
+      AWS_S3_ADDRESSING_STYLE: path
+    ports:
+      # Port 5002 to avoid conflict with Marquez (5000)
+      - "127.0.0.1:5002:5000"
+    networks:
+      - uc-internal
+      - uc-external
+    command: mlflow server --host 0.0.0.0 --port 5000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ==========================================================================
+  # Marquez - OpenLineage Backend (Lineage Plane)
+  # ==========================================================================
+  # Before first run: docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE marquez;"
+  marquez:
+    image: marquezproject/marquez:0.41.0
+    container_name: marquez
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MARQUEZ_CONFIG: /opt/marquez/marquez.yml
+      MARQUEZ_DB_PASSWORD: ${UC_DB_PASSWORD}
+    volumes:
+      - ./marquez/marquez.yml:/opt/marquez/marquez.yml:ro
+    ports:
+      - "127.0.0.1:5000:5000"   # API
+      - "127.0.0.1:5001:5001"   # Admin
+    networks:
+      - uc-internal
+      - uc-external
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/namespaces"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  marquez-web:
+    image: marquezproject/marquez-web:0.41.0
+    container_name: marquez-web
+    restart: unless-stopped
+    environment:
+      MARQUEZ_HOST: marquez
+      MARQUEZ_PORT: 5000
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - uc-external
+    depends_on:
+      - marquez
 
 networks:
   uc-internal:

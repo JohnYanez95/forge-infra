@@ -1,5 +1,5 @@
 #!/bin/sh
-# Unity Catalog PostgreSQL Backup Script
+# Forge Infrastructure PostgreSQL Backup Script
 # Run daily via cron: 0 2 * * * /path/to/backup.sh
 
 set -eu
@@ -22,15 +22,29 @@ fi
 # Ensure backup dir exists
 mkdir -p "$BACKUP_DIR"
 
-# Dump and compress
+TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+
+# Dump and compress each database
 echo "Backing up Unity Catalog database..."
 docker exec -e PGPASSWORD="$UC_DB_PASSWORD" uc-postgres \
     pg_dump -U uc_admin unity_catalog \
-    | gzip > "${BACKUP_DIR}/uc_$(date +%Y%m%d_%H%M%S).sql.gz"
+    | gzip > "${BACKUP_DIR}/uc_${TIMESTAMP}.sql.gz"
+
+echo "Backing up MLflow database..."
+docker exec -e PGPASSWORD="$UC_DB_PASSWORD" uc-postgres \
+    pg_dump -U uc_admin mlflow \
+    | gzip > "${BACKUP_DIR}/mlflow_${TIMESTAMP}.sql.gz"
+
+echo "Backing up Marquez database..."
+docker exec -e PGPASSWORD="$UC_DB_PASSWORD" uc-postgres \
+    pg_dump -U uc_admin marquez \
+    | gzip > "${BACKUP_DIR}/marquez_${TIMESTAMP}.sql.gz"
 
 # Prune old backups
 echo "Pruning backups older than ${RETENTION_DAYS} days..."
 find "$BACKUP_DIR" -name "uc_*.sql.gz" -mtime +$RETENTION_DAYS -delete
+find "$BACKUP_DIR" -name "mlflow_*.sql.gz" -mtime +$RETENTION_DAYS -delete
+find "$BACKUP_DIR" -name "marquez_*.sql.gz" -mtime +$RETENTION_DAYS -delete
 
 echo "Backup complete: ${BACKUP_DIR}"
-ls -lh "${BACKUP_DIR}" | tail -5
+ls -lh "${BACKUP_DIR}" | tail -10

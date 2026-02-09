@@ -2,40 +2,20 @@
 
 Personal data platform for Delta Lake projects. One storage substrate, multiple control planes.
 
-## Components
+## Services
 
-- **MinIO** - S3-compatible object storage for Delta tables
-- **Unity Catalog OSS** - Centralized metadata catalog for Delta tables
-- **PostgreSQL** - Persistent metadata store
-- **HashiCorp Vault** - Secrets management for cross-project env vars
-- **Hive Metastore** - Table resolution for Spark
-- **OpenLineage + Marquez** (planned) - Runtime data lineage
-- **MLflow** (planned) - Model registry and experiment tracking
+| Service | Version | Port | Purpose |
+|---------|---------|------|---------|
+| PostgreSQL | 16.4-alpine | 5432 (internal) | Shared metadata store |
+| Unity Catalog | v0.3.1 | 8080 | Catalog governance |
+| HashiCorp Vault | 1.15 | 8200 | Secrets management |
+| MinIO | RELEASE.2024-01-16 | 9000 / 9001 | S3-compatible object storage |
+| Hive Metastore | 4.0.0 | 9083 | Table resolution for Spark |
+| MLflow | v2.10.0 | 5002 | Model registry + experiment tracking |
+| Marquez | 0.41.0 | 5000 / 5001 | OpenLineage backend (lineage) |
+| Marquez Web | 0.41.0 | 3000 | Lineage UI |
 
-## Quick Start
-
-```bash
-# 1. Clone
-git clone https://github.com/JohnYanez95/forge-infra.git
-cd forge-infra
-
-# 2. Configure
-cp .env.example .env
-cp etc/conf/hibernate.properties.example etc/conf/hibernate.properties
-# Edit both files with your password and lake path
-
-# 3. Start services
-docker compose up -d
-
-# 4. Verify services
-curl http://127.0.0.1:8080/api/2.1/unity-catalog/catalogs  # UC
-curl http://127.0.0.1:9000/minio/health/live               # MinIO
-# UC should return: {"catalogs": []}
-
-# 5. Set up MinIO bucket
-mc alias set forge http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
-mc mb forge/forge  # Create 'forge' bucket
-```
+All ports bind to `127.0.0.1` by default. Access from a workstation via SSH tunnel.
 
 ## Architecture
 
@@ -51,15 +31,17 @@ mc mb forge/forge  # Create 'forge' bucket
 │         │                │                    │              │
 │         └────────────────┼────────────────────┘              │
 │                          ▼                                   │
-│              ┌───────────────────────┐                      │
-│              │   MinIO (S3-compat)   │ ← canonical writes   │
-│              │   s3a://forge/lake/   │   :9000 (API)        │
-│              │  bronze/silver/gold   │   :9001 (Console)    │
+│              ┌───────────────────────┐  ┌────────────────┐  │
+│              │   MinIO (S3-compat)   │  │    Marquez     │  │
+│              │   s3a://forge/lake/   │  │  (OpenLineage) │  │
+│              │  bronze/silver/gold   │  │   :5000/:5001  │  │
+│              │   :9000 (API)        │  │   Web UI :3000 │  │
+│              │   :9001 (Console)    │  └────────────────┘  │
 │              └───────────────────────┘                      │
 │                          │                                   │
 │              ┌───────────────────────┐                      │
 │              │     PostgreSQL        │ ← metadata store     │
-│              │   (UC, HMS, MLflow)   │   (internal)         │
+│              │ (UC,HMS,MLflow,Marq.) │   (internal)         │
 │              └───────────────────────┘                      │
 └─────────────────────────────────────────────────────────────┘
                            │
@@ -72,75 +54,175 @@ mc mb forge/forge  # Create 'forge' bucket
     └─────────┘      └─────────┘      └─────────┘
 ```
 
-## Pinned Versions
+## Quick Start
 
-All components are pinned to stable releases:
+```bash
+# 1. Clone and configure
+git clone https://github.com/JohnYanez95/forge-infra.git
+cd forge-infra
+cp .env.example .env
+cp etc/conf/hibernate.properties.example etc/conf/hibernate.properties
+# Edit both files: set UC_DB_PASSWORD, MINIO_ROOT_PASSWORD, LAKE_PATH
 
-| Component | Version | Notes |
-|-----------|---------|-------|
-| MinIO | RELEASE.2024-01-16 | S3-compatible storage |
-| Hive Metastore | 4.0.0 | Table resolution for Spark |
-| Unity Catalog | v0.3.1 | Pinned in docker-compose.yml |
-| PostgreSQL | 16.4-alpine | Metadata store |
-| Vault | 1.15 | Secrets management |
-| PySpark | 4.0.0 | With Scala 2.13 |
-| Delta Spark | 4.0.0 | Match Spark version |
-| DuckDB | 1.2.0 | Pin in requirements.txt |
-| unitycatalog-client | 0.3.1 | Match UC server |
+# 2. Start services
+docker compose up -d
+
+# 3. Create databases (first time only)
+docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE metastore;"
+docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE mlflow;"
+docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE marquez;"
+
+# 4. Initialize Vault
+chmod +x scripts/vault-init.sh
+./scripts/vault-init.sh
+# IMPORTANT: Back up vault/init-keys.json securely, then delete from disk
+
+# 5. Create MinIO bucket
+mc alias set forge http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+mc mb forge/forge
+
+# 6. Verify
+curl http://localhost:8080/api/2.1/unity-catalog/catalogs   # UC
+curl http://localhost:9000/minio/health/live                 # MinIO
+curl http://localhost:5000/api/v1/namespaces                 # Marquez
+curl http://localhost:5002/api/2.0/mlflow/experiments/list   # MLflow
+```
 
 ## Client Configuration
 
-Projects connect to UC using environment variables:
+Projects connect via environment variables. Use `koe bootstrap` to set them all at once:
 
-| Variable | Default | Used By |
-|----------|---------|---------|
-| `UC_SERVER_URL` | `http://localhost:8080` | Spark |
-| `UC_API_URL` | `http://localhost:8080/api/2.1/unity-catalog` | Python REST client |
-| `UC_TOKEN` | (none) | All clients (when auth enabled) |
-| `UC_ENABLED` | `false` | Application toggle |
-
-### Spark (Full UC Integration)
-
-```python
-spark = (
-    SparkSession.builder
-    .config("spark.jars.packages",
-            "io.delta:delta-spark_2.13:4.0.0,"
-            "io.unitycatalog:unitycatalog-spark_2.13:0.3.1")
-    .config("spark.sql.catalog.my_catalog", "io.unitycatalog.spark.UCSingleCatalog")
-    .config("spark.sql.catalog.my_catalog.uri", os.getenv("UC_SERVER_URL"))
-    .getOrCreate()
-)
-
-# Query via catalog
-spark.table("my_catalog.schema.table").show()
+```bash
+eval "$(koe bootstrap)"
 ```
 
-### DuckDB (Direct Delta Access)
+Or set manually:
 
-DuckDB's UC extension is not yet in stable. Use `delta_scan()` for reliable access:
+| Variable | Value | Used By |
+|----------|-------|---------|
+| `VAULT_ADDR` | `http://localhost:8200` | Vault client |
+| `METASTORE_URI` | `thrift://localhost:9083` | Spark |
+| `MINIO_ENDPOINT` | `http://localhost:9000` | Spark, DuckDB |
+| `MINIO_ROOT_USER` | (from Vault) | All clients |
+| `MINIO_ROOT_PASSWORD` | (from Vault) | All clients |
+| `FORGE_LAKE_ROOT_S3A` | `s3a://forge/lake` | Spark (hadoop-aws) |
+| `FORGE_LAKE_ROOT_S3` | `s3://forge/lake` | DuckDB (httpfs) |
+| `MLFLOW_TRACKING_URI` | `http://localhost:5002` | MLflow client |
+| `OPENLINEAGE_URL` | `http://localhost:5000` | Spark lineage listener |
 
-```python
-import duckdb  # Pin to 1.2.0 in requirements.txt
+## MinIO
 
-conn = duckdb.connect()
-conn.execute("INSTALL delta; LOAD delta;")
+S3-compatible object storage for Delta tables and MLflow artifacts.
 
-# Query Delta tables directly by path
-df = conn.execute("SELECT * FROM delta_scan('/lake/silver/mydata/table')").fetchdf()
+**MinIO data MUST be on local disks, NOT NFS-mounted storage.** MinIO-on-NFS has locking issues.
+
+### Bucket Structure
+
+```
+s3://forge/
+├── lake/
+│   ├── bronze/
+│   ├── silver/
+│   └── gold/
+└── mlflow/
+    └── artifacts/
 ```
 
-UC provides the catalog (table discovery, schema management) while DuckDB queries the underlying Delta files directly.
+### Usage
+
+```bash
+mc alias set forge http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+mc ls forge/forge/lake/gold/koe/
+```
+
+## Hive Metastore
+
+Table name to S3 location resolution for Spark.
+
+### Schema Naming
+
+Medallion prefix: `{layer}_{dataset}` (e.g. `gold_koe`, `silver_koe`).
+
+### Registering Tables
+
+```python
+spark.sql("CREATE DATABASE IF NOT EXISTS gold_koe")
+spark.sql("""
+    CREATE TABLE IF NOT EXISTS gold_koe.utterances
+    USING DELTA
+    LOCATION 's3a://forge/lake/gold/koe/utterances'
+""")
+spark.table("gold_koe.utterances").show()
+```
+
+## Vault
+
+Centralized secrets for all projects.
+
+### Storing Secrets
+
+```bash
+vault kv put secret/koe-tts/minio user=minio password=<secure-password>
+```
+
+### Retrieving Secrets
+
+```bash
+# CLI
+vault kv get -field=password secret/koe-tts/minio
+
+# Python (via forge module — no subprocess needed)
+from modules.forge.secrets.vault import VaultClient
+vault = VaultClient.from_env()
+pw = vault.get_field("secret/koe-tts/minio", "password")
+```
+
+## MLflow
+
+Model registry and experiment tracking at `http://localhost:5002`.
+
+- PostgreSQL backend for metadata
+- Artifact storage at `s3://forge/mlflow/` via MinIO
+
+## Marquez (OpenLineage)
+
+Runtime data lineage. Spark jobs emit lineage events via the OpenLineage listener.
+
+- API: `http://localhost:5000`
+- Web UI: `http://localhost:3000`
+- Admin: `http://localhost:5001`
+
+Config at `marquez/marquez.yml`. Shares the Postgres instance (database: `marquez`).
+
+## SSH Tunnel Access
+
+For workstation access to services running on a NAS:
+
+```ssh-config
+# ~/.ssh/config
+Host forge-nas
+    HostName <YOUR_NAS_IP>
+    User <YOUR_NAS_USER>
+    LocalForward 8080 127.0.0.1:8080   # Unity Catalog
+    LocalForward 8200 127.0.0.1:8200   # Vault
+    LocalForward 9000 127.0.0.1:9000   # MinIO API
+    LocalForward 9001 127.0.0.1:9001   # MinIO Console
+    LocalForward 9083 127.0.0.1:9083   # Hive Metastore
+    LocalForward 5000 127.0.0.1:5000   # Marquez API
+    LocalForward 5001 127.0.0.1:5001   # Marquez Admin
+    LocalForward 5002 127.0.0.1:5002   # MLflow
+    LocalForward 3000 127.0.0.1:3000   # Marquez Web UI
+```
 
 ## Security
 
 ### Default: Localhost Only
 
-By default, UC binds to `127.0.0.1:8080`. This is safe for local development.
+All services bind to `127.0.0.1`. No service is exposed to the network by default.
 
 ### Enabling Network Access
 
-1. **Enable authentication first:**
+1. **Enable Unity Catalog authentication first:**
    ```properties
    # etc/conf/server.properties
    server.authorization=enable
@@ -167,8 +249,9 @@ By default, UC binds to `127.0.0.1:8080`. This is safe for local development.
 
 ### Automated Backups
 
+`scripts/backup.sh` dumps all three databases (unity_catalog, mlflow, marquez).
+
 ```bash
-# Make executable
 chmod +x scripts/backup.sh
 
 # Add to crontab (daily at 2am)
@@ -183,232 +266,31 @@ gunzip -c backups/uc_YYYYMMDD_HHMMSS.sql.gz | \
   psql -U uc_admin unity_catalog
 ```
 
-## Vault Secrets Management
-
-HashiCorp Vault provides centralized secrets for all projects.
-
-### First-time Setup
-
-```bash
-# Start vault
-docker compose up -d vault
-
-# Initialize (saves keys to vault/init-keys.json)
-chmod +x scripts/vault-init.sh
-./scripts/vault-init.sh
-
-# IMPORTANT: Back up init-keys.json securely, then delete from disk
-```
-
-### Usage
-
-```bash
-# Store a secret
-vault kv put secret/koe-tts UC_DB_PASSWORD=mypassword WANDB_API_KEY=xxx
-
-# Retrieve
-vault kv get -format=json secret/koe-tts | jq -r '.data.data'
-
-# Inject into shell (future: CLI wrapper)
-export $(vault kv get -format=json secret/koe-tts | jq -r '.data.data | to_entries | .[] | "\(.key)=\(.value)"')
-```
-
-### Pinned Version
-
-| Component | Version |
-|-----------|---------|
-| Vault | 1.15 |
-
-## MinIO Object Storage
-
-MinIO provides S3-compatible storage for Delta tables and MLflow artifacts.
-
-### Critical: Storage Location
-
-**MinIO data MUST be on local disks, NOT NFS-mounted storage.**
-
-MinIO-on-NFS has weird locking behavior and failure modes. Configure `MINIO_DATA_PATH` in `.env`:
-
-```bash
-# For NAS: local disk path
-MINIO_DATA_PATH=/volume1/forge-data
-
-# For development: local directory (default)
-MINIO_DATA_PATH=./minio-data
-```
-
-### Bucket Structure
-
-```
-s3://forge/
-├── lake/
-│   ├── bronze/
-│   │   └── koe/
-│   ├── silver/
-│   │   └── koe/
-│   └── gold/
-│       └── koe/
-└── mlflow/
-    └── artifacts/
-```
-
-### Usage with MinIO Client
-
-```bash
-# Set up alias
-mc alias set forge http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
-
-# Browse objects
-mc ls forge/forge/lake/gold/koe/
-
-# View Delta log
-mc cat forge/forge/lake/gold/koe/utterances/_delta_log/00000000000000000000.json
-```
-
-### Client Configuration
-
-Projects connect using these environment variables:
-
-| Variable | Value | Used By |
-|----------|-------|---------|
-| `MINIO_ENDPOINT` | `http://localhost:9000` | Spark, DuckDB |
-| `MINIO_ROOT_USER` | (from .env) | All clients |
-| `MINIO_ROOT_PASSWORD` | (from .env) | All clients |
-| `FORGE_LAKE_ROOT_S3A` | `s3a://forge/lake` | Spark |
-| `FORGE_LAKE_ROOT_S3` | `s3://forge/lake` | DuckDB |
-
-## Hive Metastore
-
-Provides table name → S3 location resolution for Spark. The "phone book" for your Delta tables.
-
-### First-time Setup
-
-```bash
-# Create the metastore database
-docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE metastore;"
-
-# Start metastore (will initialize schema on first boot)
-docker compose up -d metastore
-```
-
-### How It Works
-
-```
-Spark: "Where is gold_koe.utterances?"
-         │
-         ▼
-Hive Metastore (thrift://localhost:9083)
-         │
-         ▼
-PostgreSQL: SELECT location FROM TBLS WHERE name='utterances'
-         │
-         ▼
-Returns: "s3a://forge/lake/gold/koe/utterances"
-         │
-         ▼
-Spark reads directly from MinIO
-```
-
-### Registering Tables
-
-```python
-# In Spark, register a Delta table with metastore
-spark.sql("""
-    CREATE DATABASE IF NOT EXISTS gold_koe
-""")
-
-spark.sql("""
-    CREATE TABLE IF NOT EXISTS gold_koe.utterances
-    USING DELTA
-    LOCATION 's3a://forge/lake/gold/koe/utterances'
-""")
-
-# Now queryable by name
-spark.table("gold_koe.utterances").show()
-```
-
-### Spark Configuration
-
-```python
-spark = (
-    SparkSession.builder
-    .config("spark.sql.catalogImplementation", "hive")
-    .config("hive.metastore.uris", "thrift://localhost:9083")
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-    # ... S3/MinIO config ...
-    .getOrCreate()
-)
-```
-
-### Schema Naming Convention
-
-Uses medallion prefix (layer first):
-
-| Schema | Purpose |
-|--------|---------|
-| `bronze_koe` | Raw ingested data |
-| `silver_koe` | Cleaned, normalized |
-| `gold_koe` | Training-ready |
-
-## MLflow Integration (Planned)
-
-Will be enabled with MinIO artifact storage:
-
-- Model registry at `http://localhost:5002`
-- PostgreSQL backend for metadata
-- Artifact storage at `s3://forge/mlflow/`
-
-First, create the MLflow database:
-```bash
-docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE mlflow;"
-```
+Same pattern for `mlflow_*.sql.gz` and `marquez_*.sql.gz`.
 
 ## Troubleshooting
 
 ### UC using embedded H2 instead of Postgres
 
-**Symptom:** Tables disappear after container restart
+**Symptom:** Tables disappear after container restart.
 
-**Check:**
+**Fix:** Ensure `hibernate.properties` is mounted at `/opt/unitycatalog/etc/conf/`.
+
 ```bash
 docker logs unity-catalog | grep -i "datasource\|h2\|postgres"
 ```
 
-**Fix:** Ensure `hibernate.properties` is mounted at `/opt/unitycatalog/etc/conf/`
+## Files
 
-## Roadmap
-
-### Storage Layer
-- [x] MinIO S3-compatible storage
-- [ ] Bucket lifecycle policies
-- [ ] Cross-region replication (if needed)
-
-### Catalog Layer
-- [x] Unity Catalog for governance (future use)
-- [x] Hive Metastore for Spark table resolution
-- [ ] DuckDB view sync from metastore
-
-### Lineage Layer
-- [ ] OpenLineage + Marquez for runtime lineage
-- [ ] Dataset/job relationship graphs
-
-### Model Registry (MLflow)
-- [ ] Enable MLflow service with PostgreSQL backend
-- [ ] Artifact storage on MinIO (`s3://forge/mlflow/`)
-- [ ] Model versioning and staging (dev → staging → prod)
-- [ ] Integration with training pipelines
-
-### Vault Expansion
-- [x] Basic KV secrets engine
-- [ ] CLI wrapper for easy secret injection (`koe bootstrap`)
-- [ ] AppRole auth for CI/CD pipelines
-- [ ] Secret rotation policies
-
-### Infrastructure
-- [ ] Reverse proxy (Caddy/Traefik) for TLS termination
-- [ ] Unified auth across services
-- [ ] Monitoring stack (Prometheus + Grafana)
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | Service definitions (8 containers) |
+| `.env.example` | Environment variables template |
+| `marquez/marquez.yml` | Marquez server configuration |
+| `vault/config/vault.hcl` | Vault server configuration |
+| `etc/conf/` | Unity Catalog configuration |
+| `scripts/backup.sh` | Database backup script (UC + MLflow + Marquez) |
+| `scripts/vault-init.sh` | Vault initialization script |
 
 ## Projects Using This Infrastructure
 
