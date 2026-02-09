@@ -10,7 +10,7 @@ Personal data platform for Delta Lake projects. One storage substrate, multiple 
 | Unity Catalog | v0.3.1 | 8080 | Catalog governance |
 | HashiCorp Vault | 1.15 | 8200 | Secrets management |
 | MinIO | RELEASE.2024-01-16 | 9000 / 9001 | S3-compatible object storage |
-| Hive Metastore | 4.0.0 | 9083 | Table resolution for Spark |
+| Hive Metastore | 3.1.3 | 9083 | Table resolution for Spark |
 | MLflow | v2.10.0 | 5002 | Model registry + experiment tracking |
 | Marquez | 0.41.0 | 5000 / 5001 | OpenLineage backend (lineage) |
 | Marquez Web | 0.41.0 | 3000 | Lineage UI |
@@ -73,7 +73,7 @@ curl -fSL -o hive/lib/postgresql-42.7.3.jar \
 docker compose up -d --build
 
 # 4. Create databases (first time only)
-docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE metastore;"
+docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE metastore_v3;"
 docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE mlflow;"
 docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE marquez;"
 
@@ -254,7 +254,7 @@ All services bind to `127.0.0.1`. No service is exposed to the network by defaul
 
 ### Automated Backups
 
-`scripts/backup.sh` dumps all three databases (unity_catalog, mlflow, marquez).
+`scripts/backup.sh` dumps all four databases (unity_catalog, metastore_v3, mlflow, marquez).
 
 ```bash
 chmod +x scripts/backup.sh
@@ -271,7 +271,7 @@ gunzip -c backups/uc_YYYYMMDD_HHMMSS.sql.gz | \
   psql -U uc_admin unity_catalog
 ```
 
-Same pattern for `mlflow_*.sql.gz` and `marquez_*.sql.gz`.
+Same pattern for `metastore_v3_*.sql.gz`, `mlflow_*.sql.gz`, and `marquez_*.sql.gz`.
 
 ## Troubleshooting
 
@@ -282,6 +282,7 @@ Same pattern for `mlflow_*.sql.gz` and `marquez_*.sql.gz`.
 - **MinIO healthcheck fails:** The MinIO container doesn't ship `curl`. Use `mc ready local` instead.
 - **MLflow `No module named 'psycopg2'`:** The base MLflow image lacks a Postgres driver. Use the custom `mlflow/Dockerfile` which adds `psycopg2-binary`.
 - **Hive Metastore `ClassNotFoundException: org.postgresql.Driver`:** The Hive image doesn't include the PostgreSQL JDBC driver. Download it into `hive/lib/` (see Quick Start step 2).
+- **Hive Metastore `ClassNotFoundException: IOStatisticsSource`:** You mounted `hadoop-aws:3.3.4+` into HMS 3.1.3 which bundles Hadoop 3.1.0. The `IOStatisticsSource` interface only exists in Hadoop 3.3+. Use the image's built-in jars (baked in via `hive-metastore/Dockerfile`).
 - **`CREATE DATABASE` fails with `database "uc_admin" does not exist`:** Specify the target database explicitly: `psql -U uc_admin -d unity_catalog -c "CREATE DATABASE ..."`.
 
 ### UC using embedded H2 instead of Postgres
@@ -303,10 +304,13 @@ docker logs unity-catalog | grep -i "datasource\|h2\|postgres"
 | `marquez/marquez.yml` | Marquez server configuration |
 | `vault/config/vault.hcl` | Vault server configuration |
 | `mlflow/Dockerfile` | Custom MLflow image (adds psycopg2, boto3) |
+| `hive-metastore/Dockerfile` | Custom HMS 3.1.3 image (idempotent schema init, S3A jars) |
+| `hive-metastore/entrypoint.sh` | Idempotent entrypoint (survives NAS reboots) |
 | `hive/lib/postgresql-42.7.3.jar` | PostgreSQL JDBC driver for Hive (gitignored, download at setup) |
 | `etc/conf/` | Unity Catalog configuration |
-| `scripts/backup.sh` | Database backup script (UC + MLflow + Marquez) |
+| `scripts/backup.sh` | Database backup script (UC + HMS + MLflow + Marquez) |
 | `scripts/vault-init.sh` | Vault initialization script |
+| `tests/spark_smoke_test.py` | PySpark smoke test (DDL, DML, S3A I/O) |
 
 ## Projects Using This Infrastructure
 

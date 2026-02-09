@@ -129,9 +129,10 @@ services:
       minio:
         condition: service_healthy
     volumes:
+      # S3A jars (hadoop-aws + aws-java-sdk) are baked into the image via
+      # Dockerfile — copied from Hadoop tools to Hive lib. They must match
+      # the image's Hadoop 3.1.0, NOT Spark's 3.4.1.
       - ./hive/lib/postgresql-42.7.3.jar:/opt/hive/lib/postgresql-42.7.3.jar:ro
-      - ./hms-jars/hadoop-aws-3.3.4.jar:/opt/hive/lib/hadoop-aws-3.3.4.jar:ro
-      - ./hms-jars/aws-java-sdk-bundle-1.12.262.jar:/opt/hive/lib/aws-java-sdk-bundle-1.12.262.jar:ro
     environment:
       SERVICE_NAME: metastore
       DB_DRIVER: postgres

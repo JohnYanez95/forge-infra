@@ -40,11 +40,17 @@ docker exec -e PGPASSWORD="$UC_DB_PASSWORD" uc-postgres \
     pg_dump -U uc_admin marquez \
     | gzip > "${BACKUP_DIR}/marquez_${TIMESTAMP}.sql.gz"
 
+echo "Backing up Hive Metastore database (v3)..."
+docker exec -e PGPASSWORD="$UC_DB_PASSWORD" uc-postgres \
+    pg_dump -U uc_admin metastore_v3 \
+    | gzip > "${BACKUP_DIR}/metastore_v3_${TIMESTAMP}.sql.gz"
+
 # Prune old backups
 echo "Pruning backups older than ${RETENTION_DAYS} days..."
 find "$BACKUP_DIR" -name "uc_*.sql.gz" -mtime +$RETENTION_DAYS -delete
 find "$BACKUP_DIR" -name "mlflow_*.sql.gz" -mtime +$RETENTION_DAYS -delete
 find "$BACKUP_DIR" -name "marquez_*.sql.gz" -mtime +$RETENTION_DAYS -delete
+find "$BACKUP_DIR" -name "metastore_v3_*.sql.gz" -mtime +$RETENTION_DAYS -delete
 
 echo "Backup complete: ${BACKUP_DIR}"
 ls -lh "${BACKUP_DIR}" | tail -10
