@@ -12,6 +12,11 @@ RUN cp /opt/hadoop/share/hadoop/tools/lib/hadoop-aws-3.1.0.jar \
        /opt/hive/lib/
 USER hive
 
+# S3A / MinIO config for the Hadoop Configuration object.
+# JVM -D flags don't reach Hadoop Configuration — must use XML.
+# Credentials come from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars.
+COPY conf/hive-site.xml /opt/hive/conf/hive-site.xml
+
 # Replace entrypoint with idempotent version that survives container
 # restarts (e.g., NAS reboot). The stock entrypoint runs
 # `schematool -initSchema` which fails if schema already exists.

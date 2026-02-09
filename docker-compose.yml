@@ -136,18 +136,18 @@ services:
     environment:
       SERVICE_NAME: metastore
       DB_DRIVER: postgres
+      # S3A config (endpoint, path-style, credentials provider, warehouse dir)
+      # is in hive-site.xml baked into the image. JVM -D flags only work for
+      # JDO/JDBC props (DataNucleus reads System.getProperty), NOT for Hadoop
+      # Configuration props like fs.s3a.* — those must be in XML.
       SERVICE_OPTS: >-
         -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
         -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/metastore_v3
         -Djavax.jdo.option.ConnectionUserName=uc_admin
         -Djavax.jdo.option.ConnectionPassword=${UC_DB_PASSWORD}
-        -Dfs.s3a.endpoint=http://minio:9000
-        -Dfs.s3a.path.style.access=true
-        -Dfs.s3a.connection.ssl.enabled=false
-        -Dfs.s3a.access.key=${MINIO_ROOT_USER}
-        -Dfs.s3a.secret.key=${MINIO_ROOT_PASSWORD}
-        -Dfs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
-        -Dhive.metastore.warehouse.dir=s3a://forge/lake/warehouse/
+      # S3A credentials — read by EnvironmentVariableCredentialsProvider
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
     ports:
       - "127.0.0.1:9083:9083"
     networks:
