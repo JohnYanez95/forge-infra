@@ -145,7 +145,7 @@ services:
       - uc-internal
       - uc-external
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 9083 || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9083'"]
       interval: 30s
       timeout: 10s
       retries: 3
