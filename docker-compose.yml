@@ -232,6 +232,52 @@ services:
     depends_on:
       - marquez
 
+  # ==========================================================================
+  # Spark Test Runner — NAS-local smoke tests (Plan Step 3)
+  # ==========================================================================
+  # Run smoke test:
+  #   docker compose --profile test run --rm spark-test
+  #
+  # Interactive PySpark shell:
+  #   docker compose --profile test run --rm --entrypoint /opt/spark/bin/pyspark spark-test \
+  #     --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262
+  #
+  # Override Spark image (e.g. test 4.0.2):
+  #   SPARK_TEST_IMAGE=apache/spark:4.0.2-scala2.13-java17-python3-ubuntu \
+  #     docker compose --profile test run --rm spark-test
+  spark-test:
+    image: ${SPARK_TEST_IMAGE:-apache/spark:4.0.0-scala2.13-java17-python3-ubuntu}
+    profiles: ["test"]
+    container_name: forge-spark-test
+    depends_on:
+      metastore:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      # Credentials from .env — set at connection time only, never persisted (§9)
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      # Ivy cache location
+      IVY_HOME: /tmp/.ivy2
+      # Test config (overridable)
+      METASTORE_URI: thrift://metastore:9083
+      S3_ENDPOINT: http://minio:9000
+      WAREHOUSE_DIR: s3a://forge/lake/warehouse/
+    volumes:
+      - ./tests/spark_smoke_test.py:/opt/spark/tests/spark_smoke_test.py:ro
+      - ./spark-ivy:/tmp/.ivy2
+    # No ports exposed — test-only container (§5 least privilege)
+    networks:
+      - uc-external
+    entrypoint: ["/opt/spark/bin/spark-submit"]
+    command:
+      - "--master"
+      - "local[*]"
+      - "--packages"
+      - "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
+      - "/opt/spark/tests/spark_smoke_test.py"
+
 networks:
   uc-internal:
     internal: true
