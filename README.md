@@ -64,24 +64,29 @@ cp .env.example .env
 cp etc/conf/hibernate.properties.example etc/conf/hibernate.properties
 # Edit both files: set UC_DB_PASSWORD, MINIO_ROOT_PASSWORD, LAKE_PATH
 
-# 2. Start services
-docker compose up -d
+# 2. Download dependencies
+mkdir -p hive/lib
+curl -fSL -o hive/lib/postgresql-42.7.3.jar \
+  "https://jdbc.postgresql.org/download/postgresql-42.7.3.jar"
 
-# 3. Create databases (first time only)
+# 3. Start services
+docker compose up -d --build
+
+# 4. Create databases (first time only)
 docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE metastore;"
 docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE mlflow;"
 docker exec -it uc-postgres psql -U uc_admin -c "CREATE DATABASE marquez;"
 
-# 4. Initialize Vault
+# 5. Initialize Vault
 chmod +x scripts/vault-init.sh
 ./scripts/vault-init.sh
 # IMPORTANT: Back up vault/init-keys.json securely, then delete from disk
 
-# 5. Create MinIO bucket
+# 6. Create MinIO bucket
 mc alias set forge http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
 mc mb forge/forge
 
-# 6. Verify
+# 7. Verify
 curl http://localhost:8080/api/2.1/unity-catalog/catalogs   # UC
 curl http://localhost:9000/minio/health/live                 # MinIO
 curl http://localhost:5000/api/v1/namespaces                 # Marquez
@@ -288,6 +293,8 @@ docker logs unity-catalog | grep -i "datasource\|h2\|postgres"
 | `.env.example` | Environment variables template |
 | `marquez/marquez.yml` | Marquez server configuration |
 | `vault/config/vault.hcl` | Vault server configuration |
+| `mlflow/Dockerfile` | Custom MLflow image (adds psycopg2, boto3) |
+| `hive/lib/postgresql-42.7.3.jar` | PostgreSQL JDBC driver for Hive (gitignored, download at setup) |
 | `etc/conf/` | Unity Catalog configuration |
 | `scripts/backup.sh` | Database backup script (UC + MLflow + Marquez) |
 | `scripts/vault-init.sh` | Vault initialization script |
